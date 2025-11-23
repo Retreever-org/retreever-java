@@ -20,7 +20,7 @@ import java.util.Map;
  * Exposes Retreever's API documentation via HTTP endpoints.
  */
 @RestController
-@RequestMapping("/retreever-tool")
+@RequestMapping("/retreever")
 public class RetreeverController {
 
     private final RetreeverBootstrap bootstrap;
@@ -47,7 +47,7 @@ public class RetreeverController {
      *
      * @return the assembled API document
      */
-    @GetMapping
+    @GetMapping("/doc")
     public ApiDocument getDoc() {
         return bootstrap.getDocument();
     }
