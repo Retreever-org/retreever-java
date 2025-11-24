@@ -60,12 +60,6 @@ public class ApiBodySchemaResolver {
             return;
         }
 
-        Class<?> complexType = findSingleComplexParameter(method);
-        if (complexType != null) {
-            setSchemaRef(endpoint, complexType, true);
-            return;
-        }
-
         endpoint.setRequestBody(null);
     }
 
