@@ -1,108 +1,76 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.schema.resolver;
 
 import dev.retreever.domain.model.JsonProperty;
 import dev.retreever.domain.model.JsonPropertyType;
+import dev.retreever.schema.context.ResolvedTypeContext;
 
-import java.lang.reflect.*;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.Collection;
+import java.util.Map;
 
 public class JsonArrayResolver {
 
-    private final GenericContext context;
+    private final ResolvedTypeContext ctx;
 
-    public JsonArrayResolver(GenericContext context) {
-        this.context = context;
+    public JsonArrayResolver(ResolvedTypeContext ctx) {
+        this.ctx = ctx;
     }
 
-    public JsonProperty resolve(Type type) {
+    public JsonProperty resolve(Type type, String fieldName) {
 
-        // Map<K,V> → V
-        if (TypeResolver.isMap(type)) {
-            Type v = TypeResolver.getMapValueType(type);
-            return resolveElement(v, type);
+        // 1. Determine the actual element type (T from List<T>, or V from Map<K, V>)
+        Type elementType = extractElement(type);
+
+        if (elementType != null) {
+            // 2. Create the outer ARRAY property shell
+            JsonProperty arrayProp = JsonProperty.of(fieldName, JsonPropertyType.ARRAY);
+
+            // 3. Recursively resolve the element type schema using JsonPropertyResolver
+            // FIX: Use "items" as the property name for the element schema to conform
+            // to JSON Schema structure, regardless of the outer fieldName.
+            JsonProperty elementSchema = JsonPropertyResolver.resolveElement(elementType, ctx, "items");
+
+            // 4. Attach the resolved element schema to the array shell
+            arrayProp.arrayElement(elementSchema);
+            return arrayProp;
         }
 
-        // Collection<T>
-        Type elem = extractElement(type);
-        if (elem != null) {
-            return resolveElement(elem, type);
-        }
-
-        // Array T[]
+        // If T[] (Java array syntax)
         if (type instanceof Class<?> c && c.isArray()) {
-            return resolveElement(c.getComponentType(), type);
+            // 2. Create the outer ARRAY property shell
+            JsonProperty arrayProp = JsonProperty.of(fieldName, JsonPropertyType.ARRAY);
+
+            // 3. Recursively resolve the element type
+            Type componentType = c.getComponentType();
+            // FIX: Use "items" as the property name for the element schema.
+            JsonProperty elementSchema = JsonPropertyResolver.resolveElement(componentType, ctx, "items");
+
+            // 4. Attach
+            arrayProp.arrayElement(elementSchema);
+            return arrayProp;
         }
 
-        return JsonProperty.of("element", JsonPropertyType.OBJECT);
-    }
-
-    private JsonProperty resolveElement(Type elementType, Type parentType) {
-
-        Type unfolded = context.resolve(elementType);
-        Class<?> raw = TypeResolver.extractRawClass(unfolded);
-
-        if (raw == null) {
-            return JsonProperty.of("element", JsonPropertyType.OBJECT);
-        }
-
-        JsonPropertyType type = JsonPropertyTypeResolver.resolve(raw);
-        JsonProperty elem = JsonProperty.of(raw.getSimpleName(), type);
-
-        // --- SELF-RECURSION CHECK (Case 1) ---
-        // If List<A> is being resolved while resolving A → stop
-        if (parentType instanceof ParameterizedType p) {
-            Type parentElem = p.getActualTypeArguments()[0];
-            if (TypeResolver.extractRawClass(parentElem) == raw) {
-                return JsonProperty.reference(raw.getSimpleName());
-            }
-        }
-
-        // Same logic for arrays
-        if (parentType instanceof Class<?> pc && pc.isArray()) {
-            if (pc.getComponentType() == raw) {
-                return JsonProperty.reference(raw.getSimpleName());
-            }
-        }
-
-        switch (type) {
-
-            case OBJECT -> {
-                JsonObjectResolver obj = new JsonObjectResolver(context);
-                elem.addObjectProperty(obj.resolve(unfolded));
-                return elem;
-            }
-
-            case ARRAY -> {
-                Type inner = extractElement(unfolded);
-                elem.arrayElement(resolveElement(inner, elementType));
-                return elem;
-            }
-
-            default -> {
-                return elem;
-            }
-        }
+        // Fallback for types not recognized as a schema array (e.g., pure Object.class)
+        return JsonProperty.of(fieldName, JsonPropertyType.OBJECT);
     }
 
     private Type extractElement(Type type) {
-
         if (type instanceof ParameterizedType p) {
+            Class<?> rawType = (Class<?>) p.getRawType();
             Type[] args = p.getActualTypeArguments();
-            if (args.length > 0) {
-                return args[0];
+
+            // Handles List<T>, Set<T>, Optional<T>, Stream<T> (Single generic argument)
+            if (Collection.class.isAssignableFrom(rawType) || args.length == 1) {
+                // Use ctx.resolve to find the concrete type for T, addressing nested generics
+                return ctx.resolve(args[0]);
+            }
+
+            // Handles Map<K, V> (Two generic arguments: we want the value V, which is index 1)
+            if (Map.class.isAssignableFrom(rawType) && args.length == 2) {
+                return ctx.resolve(args[1]);
             }
         }
-
-        if (type instanceof Class<?> c && c.isArray()) {
-            return c.getComponentType();
-        }
-
         return null;
     }
 }
