@@ -1,0 +1,19 @@
+package dev.retreever.schema.model;
+
+import dev.retreever.domain.model.JsonPropertyType;
+
+/**
+ * Represents an atomic JSON value type.
+ */
+public class ValueSchema implements Schema {
+
+    private final JsonPropertyType type;
+
+    public ValueSchema(JsonPropertyType type) {
+        this.type = type;
+    }
+
+    public JsonPropertyType getType() {
+        return type;
+    }
+}
