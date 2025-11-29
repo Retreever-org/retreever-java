@@ -3,7 +3,7 @@
  *
  * Licensed under the MIT License.
  * You may obtain a copy of the License at:
- *     [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT)
+ *     https://opensource.org/licenses/MIT
  */
 
 package dev.retreever.engine;
@@ -13,6 +13,8 @@ import dev.retreever.repo.SchemaRegistry;
 import dev.retreever.schema.model.Schema;
 import dev.retreever.schema.resolver.SchemaResolver;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,9 +27,11 @@ import java.util.Set;
 
 /**
  * Orchestrates complete schema resolution for REST controllers and exception handlers.
- * Extracts endpoints/parameters, unwraps containers, resolves schemas, and registers them.
+ * Stores UNWRAPPED schemas with TRUE wrapped types as keys (ResponseEntity<T>, etc.)
  */
 public class SchemaResolutionOrchestrator {
+
+    private static final Logger log = LoggerFactory.getLogger(SchemaResolutionOrchestrator.class);
 
     private final SchemaRegistry schemaRegistry;
 
@@ -47,19 +51,23 @@ public class SchemaResolutionOrchestrator {
 
         // Optimize registry
         schemaRegistry.optimize();
+
+        log.info("SchemaResolutionOrchestrator: {} schemas registered", schemaRegistry.size());
     }
 
     private void processControllers(Set<Class<?>> controllers) {
         for (Class<?> controller : controllers) {
-            if (!isBasePackageClass(controller)) continue;
+            if (isBasePackageClass(controller)) continue;
 
             for (Method method : controller.getDeclaredMethods()) {
                 if (!isRestEndpoint(method)) continue;
 
-                // Register return type schema
+                log.debug("Processing endpoint: {}", method.getName());
+
+                // 1. REGISTER RAW RETURN TYPE with its unwrapped schema
                 processReturnType(method.getGenericReturnType());
 
-                // Register @RequestBody/@ModelAttribute parameter schemas
+                // 2. REGISTER @RequestBody/@ModelAttribute schemas
                 processMethodParameters(method);
             }
         }
@@ -67,7 +75,7 @@ public class SchemaResolutionOrchestrator {
 
     private void processControllerAdvices(Set<Class<?>> controllerAdvices) {
         for (Class<?> advice : controllerAdvices) {
-            if (!isBasePackageClass(advice)) continue;
+            if (isBasePackageClass(advice)) continue;
 
             for (Method method : advice.getDeclaredMethods()) {
                 if (!method.isAnnotationPresent(ExceptionHandler.class)) continue;
@@ -81,56 +89,83 @@ public class SchemaResolutionOrchestrator {
         }
     }
 
-    private void processReturnType(Type returnType) {
-        Type unwrappedType = unwrapContainerType(returnType);
-        registerSchemaIfValid(unwrappedType);
+    /**
+     * CORE LOGIC: Store UNWRAPPED schema with TRUE wrapped type as key
+     * ResponseEntity<ApiResponse<ProductResponse>> → schema of ApiResponse<ProductResponse>
+     */
+    private void processReturnType(Type rawReturnType) {
+        if (rawReturnType == null || isVoid(rawReturnType)) return;
+
+        log.debug("Return type: {}", rawReturnType.getTypeName());
+
+        // KEY = TRUE return type (ResponseEntity<T>)
+        // VALUE = Schema of unwrapped T
+        Type unwrappedType = unwrapContainerType(rawReturnType);
+        registerSchema(rawReturnType, unwrappedType);
     }
 
     private void processMethodParameters(Method method) {
         Parameter[] parameters = method.getParameters();
         for (Parameter param : parameters) {
             if (isRequestBodyOrModelAttribute(param)) {
-                Type unwrappedType = unwrapContainerType(param.getParameterizedType());
-                registerSchemaIfValid(unwrappedType);
+                Type rawParamType = param.getParameterizedType();
+                Type unwrappedType = unwrapContainerType(rawParamType);
+                registerSchema(rawParamType, unwrappedType);
             }
         }
     }
 
-    // === TYPE PROCESSING ===
+    /**
+     * PERFECT MATCH: Key=WrappedType, Schema=UnwrappedType
+     */
+    private void registerSchema(Type keyType, Type unwrappedType) {
+        Class<?> rawClass = SchemaResolver.extractRawClass(unwrappedType);
+        if (rawClass == null || rawClass.isPrimitive() || rawClass.isEnum() || isBasePackageClass(rawClass)) {
+            return;
+        }
+
+        Schema schema = SchemaResolver.resolve(unwrappedType);
+        if (schema != null) {
+            schemaRegistry.register(keyType, schema);
+            log.debug("Registered: {} → {}", keyType.getTypeName(), schema.getClass().getSimpleName());
+        }
+    }
+
+    // === TYPE UNWRAPPING ===
 
     private Type unwrapContainerType(Type type) {
         Class<?> rawType = SchemaResolver.extractRawClass(type);
 
-        // ResponseEntity<T>
+        // ResponseEntity<T> → T
         if (rawType == ResponseEntity.class && type instanceof ParameterizedType pt) {
             return pt.getActualTypeArguments()[0];
         }
 
-        // Optional<T>
+        // Optional<T> → T
         if (rawType == Optional.class && type instanceof ParameterizedType pt) {
             return pt.getActualTypeArguments()[0];
         }
 
-        return type;
+        // Page<T> → T
+        if ("org.springframework.data.domain.Page".equals(rawType.getName()) && type instanceof ParameterizedType pt) {
+            return pt.getActualTypeArguments()[0];
+        }
+
+        return type; // Simple types
     }
 
-    private void registerSchemaIfValid(Type type) {
+    private boolean isVoid(Type type) {
         Class<?> rawClass = SchemaResolver.extractRawClass(type);
-        if (rawClass != null && !rawClass.isPrimitive() && !rawClass.isEnum()
-                && isBasePackageClass(rawClass)) {
-
-            Schema schema = SchemaResolver.resolve(type);
-            schemaRegistry.register(type, schema);
-        }
+        return rawClass == void.class || rawClass == Void.class;
     }
 
     // === FILTERING ===
 
     private boolean isBasePackageClass(Class<?> clazz) {
-        if (clazz == null) return false;
+        if (clazz == null) return true;
         String packageName = clazz.getPackageName();
         return SchemaConfig.getBasePackages().stream()
-                .anyMatch(packageName::startsWith);
+                .noneMatch(packageName::startsWith);
     }
 
     // === ENDPOINT DETECTION ===

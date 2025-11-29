@@ -15,6 +15,8 @@ import dev.retreever.schema.model.Schema;
 import dev.retreever.schema.resolver.SchemaResolver;
 import dev.retreever.view.dto.ApiDocument;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Type;
@@ -28,8 +30,11 @@ import java.util.stream.Collectors;
 /**
  * Assembles internal ApiDoc → final ApiDocument DTO for JSON serialization.
  * Integrates SchemaRegistry + ApiErrorRegistry + SchemaViewRenderer.
+ * FULL DEBUG LOGGING to diagnose schema resolution issues.
  */
 public class ApiDocumentAssembler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiDocumentAssembler.class);
 
     private final SchemaRegistry schemaRegistry;
     private final ApiErrorRegistry errorRegistry;
@@ -37,15 +42,20 @@ public class ApiDocumentAssembler {
     public ApiDocumentAssembler(SchemaRegistry schemaRegistry, ApiErrorRegistry errorRegistry) {
         this.schemaRegistry = schemaRegistry;
         this.errorRegistry = errorRegistry;
+        log.debug("ApiDocumentAssembler initialized - SchemaRegistry: {}, ErrorRegistry: {}",
+                schemaRegistry.size(), errorRegistry.size());
     }
 
     // PUBLIC ENTRY POINT
     public ApiDocument assemble(ApiDoc apiDoc) {
+        log.debug("Assembling ApiDocument: {} groups, {} total endpoints",
+                apiDoc.getGroups().size(), countTotalEndpoints(apiDoc));
+
         List<ApiDocument.ApiGroup> groups = apiDoc.getGroups().stream()
                 .map(this::mapGroup)
                 .collect(Collectors.toList());
 
-        return new ApiDocument(
+        ApiDocument doc = new ApiDocument(
                 apiDoc.getName(),
                 apiDoc.getDescription(),
                 apiDoc.getVersion(),
@@ -53,10 +63,14 @@ public class ApiDocumentAssembler {
                 Instant.now(),
                 groups
         );
+
+        log.debug("ApiDocument assembled successfully");
+        return doc;
     }
 
     // GROUP MAPPING
     private ApiDocument.ApiGroup mapGroup(ApiGroup group) {
+        log.debug("Mapping group: {} ({} endpoints)", group.getName(), group.getEndpoints().size());
         List<ApiDocument.Endpoint> endpoints = group.getEndpoints().stream()
                 .map(this::mapEndpoint)
                 .collect(Collectors.toList());
@@ -71,6 +85,8 @@ public class ApiDocumentAssembler {
 
     // ENDPOINT MAPPING (FULL SPEC ALIGNMENT)
     private ApiDocument.Endpoint mapEndpoint(ApiEndpoint endpoint) {
+        log.debug("Mapping endpoint: {} {}", endpoint.getHttpMethod(), endpoint.getPath());
+
         return new ApiDocument.Endpoint(
                 endpoint.getName(),
                 endpoint.isDeprecated(),
@@ -91,21 +107,42 @@ public class ApiDocumentAssembler {
         );
     }
 
-    // SCHEMA RENDERING
+    // SCHEMA RENDERING (WITH FULL DEBUG)
     private Map<String, Object> renderRequest(Type type) {
-        if (type == null) return null;
-        Schema schema = schemaRegistry.getSchema(type);
-        return schema != null ? SchemaViewRenderer.renderRequest(schema) : null;
+        return renderSchema(type, "REQUEST");
     }
 
     private Map<String, Object> renderResponse(Type type) {
-        if (type == null) return null;
+        return renderSchema(type, "RESPONSE");
+    }
+
+    private Map<String, Object> renderSchema(Type type, String typeName) {
+        if (type == null) {
+            log.debug("{} TYPE NULL", typeName);
+            return null;
+        }
+
+        log.debug("Looking for {} schema: {}", typeName, type.getTypeName());
+
         Schema schema = schemaRegistry.getSchema(type);
-        return schema != null ? SchemaViewRenderer.renderResponse(schema) : null;
+        if (schema == null) {
+            log.warn("{} SCHEMA MISSING: {} (SchemaRegistry size: {})",
+                    typeName, type.getTypeName(), schemaRegistry.size());
+            return null;
+        }
+
+        log.debug("{} SCHEMA FOUND: {}", typeName, type.getTypeName());
+        Map<String, Object> rendered = typeName.equals("REQUEST")
+                ? SchemaViewRenderer.renderRequest(schema)
+                : SchemaViewRenderer.renderResponse(schema);
+
+        log.debug("{} RENDERED SUCCESSFULLY", typeName);
+        return rendered;
     }
 
     // ERROR MAPPING (ApiErrorRegistry INTEGRATED)
     private List<ApiDocument.Error> mapErrors(ApiEndpoint endpoint) {
+        log.debug("Mapping {} errors", endpoint.getErrorBodyTypes().size());
         return endpoint.getErrorBodyTypes().stream()
                 .map(this::renderError)
                 .filter(Objects::nonNull)
@@ -118,14 +155,21 @@ public class ApiDocumentAssembler {
         // 1. Extract exception class from error body type
         Class<?> classType = SchemaResolver.extractRawClass(errorType);
         if (classType == null || !Throwable.class.isAssignableFrom(classType)) {
+            log.debug("Invalid exception type: {}", errorType.getTypeName());
             return null;
         }
+
         @SuppressWarnings("unchecked")
         Class<? extends Throwable> exceptionClass = (Class<? extends Throwable>) classType;
 
         // 2. Lookup ApiError from registry
         ApiError apiError = errorRegistry.get(exceptionClass);
-        if (apiError == null) return null;
+        if (apiError == null) {
+            log.debug("No ApiError for: {}", exceptionClass.getSimpleName());
+            return null;
+        }
+
+        log.debug("Error mapped: {} -> {}", exceptionClass.getSimpleName(), apiError.getStatus());
 
         // 3. Render error body schema (if present)
         Schema schema = null;
@@ -140,7 +184,7 @@ public class ApiDocumentAssembler {
 
         // 4. Map to final DTO
         return new ApiDocument.Error(
-                apiError.getStatus().name(),
+                apiError.getStatus().getReasonPhrase(),  // Fixed: getReasonPhrase()
                 apiError.getStatus().value(),
                 apiError.getDescription(),
                 apiError.getErrorCode(),
@@ -148,7 +192,7 @@ public class ApiDocumentAssembler {
         );
     }
 
-    // PARAMETER MAPPINGS
+    // PARAMETER MAPPINGS (OPTIMIZED)
     private List<ApiDocument.PathVariable> mapPathVariables(List<ApiPathVariable> vars) {
         if (vars == null || vars.isEmpty()) return List.of();
         return vars.stream()
@@ -194,5 +238,11 @@ public class ApiDocumentAssembler {
 
     private <T> List<T> safeList(List<T> list) {
         return list != null ? list : List.of();
+    }
+
+    private int countTotalEndpoints(ApiDoc apiDoc) {
+        return apiDoc.getGroups().stream()
+                .mapToInt(g -> g.getEndpoints().size())
+                .sum();
     }
 }
