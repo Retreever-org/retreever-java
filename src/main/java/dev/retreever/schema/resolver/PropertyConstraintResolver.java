@@ -8,7 +8,7 @@
 
 package dev.retreever.schema.resolver;
 
-import dev.retreever.domain.model.JsonProperty;
+import dev.retreever.schema.model.Property;
 import dev.retreever.schema.resolver.util.ConstraintResolver;
 import dev.retreever.schema.resolver.util.JsonPropertyConstraint;
 
@@ -17,46 +17,46 @@ import java.lang.reflect.Field;
 import java.util.Set;
 
 /**
- * Applies validation-based constraints to a {@link JsonProperty}.
+ * Applies validation-based constraints to a {@link Property}.
  * Delegates extraction logic to {@link ConstraintResolver} and
  * marks properties as required when applicable.
  */
-public class JsonPropertyConstraintResolver {
+public class PropertyConstraintResolver {
 
     /**
      * Populates constraint markers on the given JsonProperty
      * based on the validation annotations declared on the field.
      *
-     * @param jsonProp the property being enriched
+     * @param prop the property being enriched
      * @param field    the source field inspected via reflection
      */
-    public static void resolve(JsonProperty jsonProp, Field field) {
+    public static void resolve(Property prop, Field field) {
         Annotation[] anns = field.getAnnotations();
 
         // Normal constraints
         Set<String> constraints = ConstraintResolver.resolve(anns);
-        constraints.forEach(jsonProp::addConstraint);
+        constraints.forEach(prop::addConstraint);
 
         // ENUM handling
         Class<?> type = field.getType();
         if (type.isEnum()) {
-            appendAllowedValueConstraintIfEnum(jsonProp, type);
+            appendAllowedValueConstraintIfEnum(prop, type);
         }
 
         if (ConstraintResolver.isRequired(anns)) {
-            jsonProp.required();
+            prop.required();
         }
     }
 
-    private static void appendAllowedValueConstraintIfEnum(JsonProperty jsonProp, Class<?> type) {
-            Object[] constants = type.getEnumConstants();
-            String[] names = new String[constants.length];
+    private static void appendAllowedValueConstraintIfEnum(Property prop, Class<?> type) {
+        Object[] constants = type.getEnumConstants();
+        String[] names = new String[constants.length];
 
-            for (int i = 0; i < constants.length; i++) {
-                names[i] = ((Enum<?>) constants[i]).name();
-            }
+        for (int i = 0; i < constants.length; i++) {
+            names[i] = ((Enum<?>) constants[i]).name();
+        }
 
-            String enumConstraint = JsonPropertyConstraint.enumValue(names);
-            jsonProp.addConstraint(enumConstraint);
+        String enumConstraint = JsonPropertyConstraint.enumValue(names);
+        prop.addConstraint(enumConstraint);
     }
 }

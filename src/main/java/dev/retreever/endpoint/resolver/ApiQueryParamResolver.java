@@ -14,7 +14,6 @@ import dev.retreever.domain.annotation.Description;
 import dev.retreever.domain.model.ApiEndpoint;
 import dev.retreever.domain.model.ApiParam;
 import dev.retreever.schema.model.JsonPropertyType;
-import dev.retreever.schema.resolver.JsonPropertyTypeResolver;
 import dev.retreever.schema.resolver.util.ConstraintResolver;
 
 import java.lang.reflect.Method;

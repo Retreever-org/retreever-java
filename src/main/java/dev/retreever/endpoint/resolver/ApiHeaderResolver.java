@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 import dev.retreever.domain.annotation.ApiEndpoint;
 import dev.retreever.domain.model.ApiHeader;
-import dev.retreever.schema.resolver.JsonPropertyTypeResolver;
 import dev.retreever.repo.ApiHeaderRegistry;
 
 import java.lang.reflect.Method;

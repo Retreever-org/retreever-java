@@ -70,10 +70,9 @@ public class Property implements Schema {
         return this;
     }
 
-    public Property addConstraint(String constraint) {
+    public void addConstraint(String constraint) {
         if (constraint != null && !constraint.isBlank()) {
             this.constraints.add(constraint);
         }
-        return this;
     }
 }
