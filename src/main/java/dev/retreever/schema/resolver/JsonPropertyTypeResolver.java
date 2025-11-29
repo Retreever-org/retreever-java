@@ -8,7 +8,7 @@
 
 package dev.retreever.schema.resolver;
 
-import dev.retreever.domain.model.JsonPropertyType;
+import dev.retreever.schema.model.JsonPropertyType;
 
 import java.io.InputStream;
 import java.net.URI;

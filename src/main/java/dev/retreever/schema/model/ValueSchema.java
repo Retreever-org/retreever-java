@@ -1,7 +1,5 @@
 package dev.retreever.schema.model;
 
-import dev.retreever.domain.model.JsonPropertyType;
-
 /**
  * Represents an atomic JSON value type.
  */

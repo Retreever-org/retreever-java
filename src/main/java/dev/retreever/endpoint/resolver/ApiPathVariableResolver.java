@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import dev.retreever.domain.annotation.Description;
 import dev.retreever.domain.model.ApiEndpoint;
 import dev.retreever.domain.model.ApiPathVariable;
-import dev.retreever.domain.model.JsonPropertyType;
+import dev.retreever.schema.model.JsonPropertyType;
 import dev.retreever.schema.resolver.JsonPropertyTypeResolver;
 import dev.retreever.schema.resolver.util.ConstraintResolver;
 

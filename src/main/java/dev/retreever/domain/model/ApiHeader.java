@@ -8,6 +8,8 @@
 
 package dev.retreever.domain.model;
 
+import dev.retreever.schema.model.JsonPropertyType;
+
 /**
  * Represents a resolved HTTP header used by an endpoint.
  * Includes name, type, requirement flag, and optional description.

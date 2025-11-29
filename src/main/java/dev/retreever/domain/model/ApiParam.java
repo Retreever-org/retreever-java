@@ -8,6 +8,8 @@
 
 package dev.retreever.domain.model;
 
+import dev.retreever.schema.model.JsonPropertyType;
+
 import java.util.HashSet;
 import java.util.Set;
 

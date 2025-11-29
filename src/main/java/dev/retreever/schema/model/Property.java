@@ -1,7 +1,5 @@
 package dev.retreever.schema.model;
 
-import dev.retreever.domain.model.JsonPropertyType;
-
 import java.util.HashSet;
 import java.util.Set;
 

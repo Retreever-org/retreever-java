@@ -1,42 +1,61 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.repo;
 
-import dev.retreever.domain.model.JsonProperty;
-import dev.retreever.schema.resolver.JsonSchemaResolver;
-import dev.retreever.schema.resolver.TypeResolver;
+import dev.retreever.schema.model.Schema;
 
-import java.util.List;
+import java.lang.reflect.Type;
+import java.util.*;
 
-/**
- * Registry for storing resolved JSON schemas keyed by reference name.
- * Ensures each DTO type is processed once, returning a stable schema
- * reference for reuse across endpoints.
- */
-public class SchemaRegistry extends DocRegistry<List<JsonProperty>> {
+public final class SchemaRegistry {
 
-    private final JsonSchemaResolver jsonSchemaResolver;
+    // Cycle detection still MUST use Type identity (correct)
+    private final Set<Type> resolving = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    public SchemaRegistry(JsonSchemaResolver jsonSchemaResolver) {
-        this.jsonSchemaResolver = jsonSchemaResolver;
+    // Cache must use RAW CLASS, not Type
+    private final Map<Class<?>, Schema> resolvedSchemas = new HashMap<>();
+
+    // Cycle detection
+
+    public boolean isResolving(Type type) {
+        return resolving.contains(type);
     }
 
-    /**
-     * Resolves and registers the schema for the given DTO class if not already present.
-     *
-     * @param schema schema of the DTO
-     * @param clazz  the class whose schema should be generated
-     * @return reference name used as the registry key
-     */
-    public String registerSchema(List<JsonProperty> schema, Class<?> clazz) {
-        String ref = TypeResolver.resolveRefName(clazz);
-        add(ref, schema);
-        return ref;
+    public void markResolving(Type type) {
+        resolving.add(type);
+    }
+
+    public void unmarkResolving(Type type) {
+        resolving.remove(type);
+    }
+
+    // Cache
+
+    public boolean hasResolved(Type type) {
+        Class<?> raw = dev.retreever.schema.resolver.util.TypeUtils.getRawClass(type);
+        return resolvedSchemas.containsKey(raw);
+    }
+
+    public Schema getResolved(Type type) {
+        Class<?> raw = dev.retreever.schema.resolver.util.TypeUtils.getRawClass(type);
+        return resolvedSchemas.get(raw);
+    }
+
+    public void saveResolved(Type type, Schema schema) {
+        Class<?> raw = dev.retreever.schema.resolver.util.TypeUtils.getRawClass(type);
+        if (shouldCache(raw)) {
+            resolvedSchemas.put(raw, schema);
+        }
+    }
+
+    // Cache rules
+
+    private boolean shouldCache(Class<?> clazz) {
+
+        if (clazz.isArray()) return false;
+        if (Collection.class.isAssignableFrom(clazz)) return false;
+        if (Map.class.isAssignableFrom(clazz)) return false;
+        if (clazz.isPrimitive()) return false;
+
+        String pkg = clazz.getPackageName();
+        return !pkg.startsWith("java.") && !pkg.startsWith("jakarta.");
     }
 }

@@ -1,91 +1,118 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.engine;
 
 import dev.retreever.config.SchemaConfig;
 import dev.retreever.doc.resolver.ApiDocResolver;
-import dev.retreever.endpoint.resolver.ApiEndpointIOResolver;
+import dev.retreever.domain.model.ApiDoc;
+import dev.retreever.domain.model.ApiError;
 import dev.retreever.endpoint.resolver.ApiEndpointResolver;
 import dev.retreever.endpoint.resolver.ApiErrorResolver;
-import dev.retreever.endpoint.resolver.*;
 import dev.retreever.group.resolver.ApiGroupResolver;
 import dev.retreever.repo.ApiErrorRegistry;
 import dev.retreever.repo.ApiHeaderRegistry;
 import dev.retreever.repo.SchemaRegistry;
-import dev.retreever.schema.resolver.JsonSchemaResolver;
+import dev.retreever.schema.resolver.SchemaResolver;
 import dev.retreever.view.ApiDocumentAssembler;
-import dev.retreever.view.SchemaLookupService;
 import dev.retreever.view.dto.ApiDocument;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-/**
- * Coordinates the Retreever pipeline and drives the full documentation build.
- */
 public class RetreeverOrchestrator {
 
     private final ApiDocumentAssembler assembler;
+    private final SchemaResolver schemaResolver;
     private final ApiErrorResolver errorResolver;
     private final ApiDocResolver docResolver;
 
-    /**
-     * Constructs the orchestrator and wires all core components.
-     */
+    private final ApiErrorRegistry errorRegistry;
+
     public RetreeverOrchestrator(List<String> basePackages) {
 
-        // Initialize schema configuration with Base Packages
+        // 1. Initialise config
         SchemaConfig.init(basePackages);
 
-        // JSON schema generator + registry
-        JsonSchemaResolver jsonSchemaResolver = new JsonSchemaResolver();
-        SchemaRegistry schemaRegistry = new SchemaRegistry(jsonSchemaResolver);
-
-        // Shared header definitions
+        // 2. Registries
+        this.errorRegistry = new ApiErrorRegistry();
         ApiHeaderRegistry headerRegistry = new ApiHeaderRegistry();
+        SchemaRegistry schemaRegistry = new SchemaRegistry();
 
-        // Error resolver + registry for @ExceptionHandler mappings
-        ApiErrorRegistry errorRegistry = new ApiErrorRegistry();
-        this.errorResolver = new ApiErrorResolver(jsonSchemaResolver, errorRegistry);
-
-        // Request/response schema + header/param/path-var resolution
-        ApiEndpointIOResolver ioResolver =
-                new ApiEndpointIOResolver(schemaRegistry, headerRegistry, jsonSchemaResolver);
-
-        // Full endpoint resolver (metadata + IO + errors)
+        // 3. Resolver chain
         ApiEndpointResolver endpointResolver =
-                new ApiEndpointResolver(schemaRegistry, headerRegistry, errorRegistry, jsonSchemaResolver);
+                new ApiEndpointResolver(headerRegistry);
 
-        // Controller → ApiGroup resolver
-        ApiGroupResolver groupResolver = new ApiGroupResolver(endpointResolver);
+        ApiGroupResolver groupResolver =
+                new ApiGroupResolver(endpointResolver);
 
-        // Application-level documentation resolver
         this.docResolver = new ApiDocResolver(groupResolver);
 
-        // Converts internal schemas to renderable model/example/metadata DTO
-        SchemaLookupService lookup =
-                new SchemaLookupService(schemaRegistry, errorRegistry);
+        this.errorResolver = new ApiErrorResolver();
 
-        // Builds final ApiDocument DTO for serialization
-        this.assembler = new ApiDocumentAssembler(lookup);
+        this.schemaResolver = new SchemaResolver(schemaRegistry);
+
+        this.assembler = new ApiDocumentAssembler(schemaRegistry, errorRegistry);
     }
 
-    /**
-     * Builds the full API documentation output.
-     *
-     * @param applicationClass root application class
-     * @param controllers      detected controller classes
-     * @return full assembled ApiDocument DTO
-     */
-    public ApiDocument build(Class<?> applicationClass, Set<Class<?>> controllers, Set<Class<?>> controllerAdvices) {
-        errorResolver.resolve(controllerAdvices);
-        var doc = docResolver.resolve(applicationClass, controllers);
-        return assembler.assemble(doc);
+    public ApiDocument build(Class<?> applicationClass,
+                             Set<Class<?>> controllers,
+                             Set<Class<?>> controllerAdvices) {
+
+        // 1) Resolve Errors BEFORE endpoints
+        List<Method> adviceMethods = controllerAdvices.stream()
+                .flatMap(c -> Stream.of(c.getDeclaredMethods()))
+                .collect(Collectors.toList());
+
+        List<ApiError> resolvedErrors = errorResolver.resolve(adviceMethods);
+
+        // FIX: ApiError MUST store (Type) errorBodyType, not schema.
+        resolvedErrors.forEach(errorRegistry::register);
+
+        // 2) Resolve ApiDoc (groups/endpoints/types only)
+        ApiDoc apiDoc = docResolver.resolve(applicationClass, controllers);
+
+        // 3) Pre-resolve ALL schema types into registry
+        preResolveAllSchemas(apiDoc);
+
+        // 4) Build final DTO
+        return assembler.assemble(apiDoc);
     }
+
+    private void preResolveAllSchemas(ApiDoc doc) {
+
+        // Resolve endpoint schemas
+        doc.getGroups().forEach(group ->
+                group.getEndpoints().forEach(endpoint -> {
+
+                    // Request
+                    Type req = endpoint.getRequestBodyType();
+                    if (req != null) {
+                        schemaResolver.resolveRoot(req);
+                    }
+
+                    // Response
+                    Type resp = endpoint.getResponseBodyType();
+                    if (resp != null) {
+                        schemaResolver.resolveRoot(resp);
+                    }
+
+                    // Declared error types
+                    if (endpoint.getErrorBodyTypes() != null) {
+                        endpoint.getErrorBodyTypes()
+                                .forEach(schemaResolver::resolveRoot);
+                    }
+                })
+        );
+
+        // Resolve @ControllerAdvice errors
+        errorRegistry.values().forEach(err -> {
+            Type t = err.getErrorBodyType();
+            if (t != null) {
+                schemaResolver.resolveRoot(t);
+            }
+        });
+    }
+
 }

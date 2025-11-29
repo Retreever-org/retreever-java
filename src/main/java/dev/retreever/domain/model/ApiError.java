@@ -1,31 +1,28 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.domain.model;
 
 import org.springframework.http.HttpStatus;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.lang.reflect.Type;
 
 /**
  * Represents a resolved error model for an API endpoint.
- * Built from {@code @ExceptionHandler} methods and includes
- * status, description, exception type, and an optional error body schema.
+ * Built from @ExceptionHandler methods.
+ * <p>
+ * Stores:
+ * - HTTP status
+ * - description
+ * - fully qualified exception name (reference key)
+ * - Type of the error body (resolved later by SchemaResolver)
+ * </p>
  */
 public class ApiError {
 
     private final HttpStatus status;
     private final String description;
-    private final String exceptionName;       // fully qualified exception type
-    private String errorCode;                 // optional custom code
+    private final String exceptionName; // fully qualified exception type
+    private String errorCode;
 
-    private final List<JsonProperty> errorBody = new ArrayList<>();
+    private Type errorBodyType; // resolved at view-assembly stage
 
     private ApiError(HttpStatus status, String description, String exceptionName) {
         this.status = status;
@@ -42,20 +39,12 @@ public class ApiError {
         return this;
     }
 
-    public ApiError addErrorProperty(JsonProperty property) {
-        this.errorBody.add(property);
+    public ApiError setErrorBodyType(Type type) {
+        this.errorBodyType = type;
         return this;
     }
 
-    public ApiError setErrorBody(List<JsonProperty> properties) {
-        this.errorBody.clear();
-        this.errorBody.addAll(properties);
-        return this;
-    }
-
-    // ──────────────────────────────
-    // Getters
-    // ──────────────────────────────
+    // ───────────── Getters ─────────────
 
     public HttpStatus getStatus() {
         return status;
@@ -73,7 +62,7 @@ public class ApiError {
         return errorCode;
     }
 
-    public List<JsonProperty> getErrorBody() {
-        return errorBody;
+    public Type getErrorBodyType() {
+        return errorBodyType;
     }
 }

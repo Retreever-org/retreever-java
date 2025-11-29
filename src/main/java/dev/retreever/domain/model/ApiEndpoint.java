@@ -1,29 +1,32 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.domain.model;
 
 import org.springframework.http.HttpStatus;
 
+import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Represents a fully resolved API endpoint, including path info,
  * HTTP metadata, parameters, schemas, and error models.
- * Built by the endpoint resolver during controller inspection.
+ * <p>
+ * Instead of storing string schema references, this version stores
+ * raw Java {@link Type} objects so the SchemaResolver can correctly
+ * handle generic types such as:
+ * <p>
+ * ApiResponse<User>
+ * ApiResponse<List<User>>
+ * List<ApiResponse<Product>>
+ * <p>
+ * Type fidelity is now preserved, ensuring correct schema generation.
  */
 public class ApiEndpoint {
 
-    private String name;                    // typically method name
-    private String path;                    // /users/{id}
-    private String httpMethod;              // GET, POST, etc.
-    private HttpStatus status;              // default response status
-    private String description;             // resolved from annotation or Javadoc
+    private String name;
+    private String path;
+    private String httpMethod;
+    private HttpStatus status;
+    private String description;
     private boolean isSecured = false;
 
     private List<String> consumes;
@@ -33,14 +36,26 @@ public class ApiEndpoint {
     private List<ApiParam> queryParams;
     private List<ApiHeader> headers;
 
-    private String requestSchemaRef;
-    private String responseSchemaRef;
+    /**
+     * NEW — actual Java Type to be resolved by SchemaResolver
+     */
+    private Type requestBodyType;
 
-    private List<String> errorRefs;
+    /**
+     * NEW — actual Java Type to be resolved by SchemaResolver
+     */
+    private Type responseBodyType;
+
+    /**
+     * NEW — each exception handler return type corresponds to one entry
+     */
+    private final List<Type> errorBodyTypes = new ArrayList<>();
 
     private boolean deprecated;
 
-    // ─────────── Getters ───────────
+    // ───────────────────────────────
+    // Getters
+    // ───────────────────────────────
 
     public String getName() {
         return name;
@@ -86,23 +101,25 @@ public class ApiEndpoint {
         return headers;
     }
 
-    public String getRequestSchemaRef() {
-        return requestSchemaRef;
+    public Type getRequestBodyType() {
+        return requestBodyType;
     }
 
-    public String getResponseSchemaRef() {
-        return responseSchemaRef;
+    public Type getResponseBodyType() {
+        return responseBodyType;
     }
 
-    public List<String> getErrorRefs() {
-        return errorRefs;
+    public List<Type> getErrorBodyTypes() {
+        return errorBodyTypes;
     }
 
     public boolean isDeprecated() {
         return deprecated;
     }
 
-    // ─────────── Fluent / Mutator Setters ───────────
+    // ───────────────────────────────
+    // Mutators / Fluent setters
+    // ───────────────────────────────
 
     public ApiEndpoint setName(String name) {
         this.name = name;
@@ -150,16 +167,25 @@ public class ApiEndpoint {
         this.headers = headers;
     }
 
-    public void setRequestBody(String requestSchemaRef) {
-        this.requestSchemaRef = requestSchemaRef;
+    /**
+     * NEW — required for correct schema processing
+     */
+    public void setRequestBodyType(Type type) {
+        this.requestBodyType = type;
     }
 
-    public void setResponseBody(String responseSchemaRef) {
-        this.responseSchemaRef = responseSchemaRef;
+    /**
+     * NEW — required for correct schema processing
+     */
+    public void setResponseBodyType(Type type) {
+        this.responseBodyType = type;
     }
 
-    public void setErrorRefs(List<String> errorRefs) {
-        this.errorRefs = errorRefs;
+    /**
+     * NEW — append exception response schema types
+     */
+    public void addErrorBodyType(Type type) {
+        this.errorBodyTypes.add(type);
     }
 
     public void deprecate() {
