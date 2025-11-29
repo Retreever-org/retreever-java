@@ -9,6 +9,7 @@
 package dev.retreever.endpoint.resolver;
 
 import dev.retreever.domain.annotation.Description;
+import dev.retreever.schema.resolver.JsonPropertyTypeResolver;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 

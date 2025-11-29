@@ -8,9 +8,9 @@ import java.util.Set;
  */
 public class Property implements Schema {
 
-    private final String name;
-    private final JsonPropertyType type;
-    private final Schema value;
+    private final String name; // field name
+    private final JsonPropertyType type; // data type
+    private final Schema value; // value schema
 
     private boolean required = false;
     private String description;

@@ -8,6 +8,7 @@
 
 package dev.retreever.endpoint.resolver;
 
+import dev.retreever.schema.resolver.JsonPropertyTypeResolver;
 import org.springframework.web.bind.annotation.PathVariable;
 import dev.retreever.domain.annotation.Description;
 import dev.retreever.domain.model.ApiEndpoint;
