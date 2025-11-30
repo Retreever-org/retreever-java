@@ -1,6 +1,11 @@
-# Retreever
+<div align="center">
 
-**Instant API Documentation & Testing for Spring Boot — Zero YAML. Zero Manual Work.**
+![Retreever Logo](https://raw.githubusercontent.com/Retreever-org/retreever-java/refs/heads/main/Docmentation/Logo/Retreever_logo_white.png)
+
+</div>
+
+
+# Instant API Documentation & Testing for Spring Boot — Zero Config, Always Live.
 
 Retreever is a **lightweight, developer-first toolkit** that automatically **discovers, documents, and tests** your Spring Boot APIs — *without a single manual annotation or YAML file.*
 
