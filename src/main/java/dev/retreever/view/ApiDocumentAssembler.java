@@ -199,8 +199,9 @@ public class ApiDocumentAssembler {
                 .map(v -> new ApiDocument.PathVariable(
                         v.getName(),
                         v.getType().displayName(),
-                        v.getDescription(),
-                        new ArrayList<>(v.getConstraints())
+                        v.getRequired(),
+                        new ArrayList<>(v.getConstraints()),
+                        v.getDescription()
                 ))
                 .collect(Collectors.toList());
     }

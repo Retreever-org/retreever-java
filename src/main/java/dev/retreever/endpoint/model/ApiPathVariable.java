@@ -21,6 +21,7 @@ public class ApiPathVariable {
 
     private String name;                    // e.g., "id"
     private JsonPropertyType type;          // STRING, NUMBER, etc.
+    private boolean required = true;        // Path variable is required by default.
     private String description;             // optional dev doc
 
     private final Set<String> constraints = new HashSet<>();
@@ -41,6 +42,10 @@ public class ApiPathVariable {
 
     public Set<String> getConstraints() {
         return constraints;
+    }
+
+    public boolean getRequired() {
+        return required;
     }
 
     // ───────── fluent setters ─────────

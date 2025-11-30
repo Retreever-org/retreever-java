@@ -101,7 +101,8 @@ public record ApiDocument(
     public record PathVariable(
             @JsonProperty("name") String name,
             @JsonProperty("type") String type,
-            @JsonProperty("description") String description,
-            @JsonProperty("constraints") List<String> constraints
+            @JsonProperty("required") boolean required,
+            @JsonProperty("constraints") List<String> constraints,
+            @JsonProperty("description") String description
     ) {}
 }
