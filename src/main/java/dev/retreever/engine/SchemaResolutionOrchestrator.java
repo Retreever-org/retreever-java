@@ -52,8 +52,9 @@ public class SchemaResolutionOrchestrator {
         // Optimize registry
         schemaRegistry.optimize();
 
+        log.debug("All Schema Successfully Resolved.");
         schemaRegistry.getSchemas().values().forEach(schema -> {
-                    System.out.println(schema.toString());
+                    log.debug(schema.toString());
                 }
         );
 
@@ -129,11 +130,9 @@ public class SchemaResolutionOrchestrator {
             return;
         }
 
-        Schema schema = SchemaResolver.resolve(unwrappedType);
-        if (schema != null) {
-            schemaRegistry.register(keyType, schema);
-            log.debug("Registered: {} → {}", keyType.getTypeName(), schema.getClass().getSimpleName());
-        }
+        Schema schema = SchemaResolver.initResolution(unwrappedType);
+        schemaRegistry.register(keyType, schema);
+        log.debug("Registered: {} → {}", keyType.getTypeName(), schema.getClass().getSimpleName());
     }
 
     // === TYPE UNWRAPPING ===

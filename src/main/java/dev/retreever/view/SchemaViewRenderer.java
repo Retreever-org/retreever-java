@@ -1,21 +1,25 @@
+/*
+ * Copyright (c) 2025 Retreever Contributors
+ *
+ * Licensed under the MIT License.
+ * You may obtain a copy of the License at:
+ *     https://opensource.org/licenses/MIT
+ */
+
 package dev.retreever.view;
 
 import dev.retreever.schema.model.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
 /**
- * Renders Schema → 3-part JSON structure for API documentation.
+ * Renders Schema → 3-part JSON structure for API documentation (model, example, metadata).
  */
 public final class SchemaViewRenderer {
 
     public static final String MODEL_KEY = "model";
     public static final String EXAMPLE_MODEL_KEY = "example_model";
     public static final String METADATA_KEY = "metadata";
-
-    private static final Logger log = LoggerFactory.getLogger(SchemaViewRenderer.class);
 
     private SchemaViewRenderer() {}
 
@@ -28,70 +32,59 @@ public final class SchemaViewRenderer {
     }
 
     private static Map<String, Object> render(Schema schema, boolean includeMetadata) {
-        if (schema == null) return null;
+        if (schema == null) return new LinkedHashMap<>();
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put(MODEL_KEY, renderModel(schema));
         result.put(EXAMPLE_MODEL_KEY, renderExample(schema));
 
         if (includeMetadata) {
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            buildMetadata(schema, "", metadata);
-            result.put(METADATA_KEY, metadata);
+            result.put(METADATA_KEY, buildMetadata(schema));
         }
         return result;
     }
 
-    /**
-     * 🔥 FIXED: Property → getSchema() (full nested structure)
-     */
     private static Object renderModel(Schema s) {
-        if (s instanceof Property prop) {
-            // ✅ CRITICAL: Use getSchema() not getType()
-            return renderModel(prop.getValue());
-        }
-        if (s instanceof ValueSchema vs) {
-            return vs.getType().displayName();
-        }
+        if (s == null) return null;
+        if (s instanceof Property p) return renderModel(p.getValue());
+        if (s instanceof ValueSchema vs) return vs.getType().displayName();
         if (s instanceof ArraySchema arr) {
             Schema element = arr.getElementSchema();
-            return element != null ? List.of(renderModel(element)) : List.of();
+            Object model = renderModel(element);
+            return model != null ? List.of(model) : new ArrayList<>();
         }
         if (s instanceof ObjectSchema obj) {
             Map<String, Object> out = new LinkedHashMap<>();
-            obj.getProperties().values().forEach(p ->
-                    out.put(p.getName(), renderModel(p))  // Property → getSchema()
-            );
+            for (Property p : obj.getProperties().values()) {
+                if (p.getValue() != null) {
+                    out.put(p.getName(), renderModel(p.getValue()));
+                }
+            }
             return out;
         }
         return null;
     }
 
-    /**
-     * 🔥 FIXED: Property → getSchema() for examples
-     */
     private static Object renderExample(Schema s) {
-        if (s instanceof Property prop) {
-            // ✅ CRITICAL: Use getSchema() not leaf example
-            return renderExample(prop.getValue());
-        }
+        if (s == null) return null;
+        if (s instanceof Property p) return renderExample(p.getValue());
         if (s instanceof ArraySchema arr) {
             Schema element = arr.getElementSchema();
-            return element != null ? List.of(renderExample(element)) : List.of();
+            Object example = renderExample(element);
+            return example != null ? List.of(example) : new ArrayList<>();
         }
         if (s instanceof ObjectSchema obj) {
             Map<String, Object> out = new LinkedHashMap<>();
-            obj.getProperties().values().forEach(p ->
-                    out.put(p.getName(), renderExample(p))  // Property → getSchema()
-            );
+            for (Property p : obj.getProperties().values()) {
+                if (p.getValue() != null) {
+                    out.put(p.getName(), renderExample(p.getValue()));
+                }
+            }
             return out;
         }
         return generateLeafExample(s);
     }
 
-    /**
-     * Leaf example generation (ValueSchema, primitives)
-     */
     private static Object generateLeafExample(Schema s) {
         if (s instanceof ValueSchema vs) {
             return switch (vs.getType()) {
@@ -104,37 +97,43 @@ public final class SchemaViewRenderer {
                 default -> null;
             };
         }
-        if (s instanceof Property prop) {
-            return prop.getExample() != null ? prop.getExample() : "example";
+        if (s instanceof Property p) {
+            return p.getExample() != null ? p.getExample() : "example";
         }
         return null;
     }
 
-    private static void buildMetadata(Schema s, String parentPath, Map<String, Object> out) {
-        if (s instanceof Property prop) {
-            // ✅ FIXED: Handle Property metadata correctly
-            if (prop.getValue() instanceof ValueSchema) {
+    private static Map<String, Object> buildMetadata(Schema schema) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        buildMetadata(schema, "", metadata);
+        return metadata;
+    }
+
+    private static void buildMetadata(Schema s, String path, Map<String, Object> out) {
+        if (s == null) return;
+
+        if (s instanceof Property p) {
+            if (p.getValue() instanceof ValueSchema) {
                 Map<String, Object> meta = new LinkedHashMap<>();
-                meta.put("description", Optional.ofNullable(prop.getDescription()).orElse(""));
-                meta.put("constraints", new ArrayList<>(prop.getConstraints()));
-                out.put(parentPath.isEmpty() ? prop.getName() : parentPath, meta);
+                meta.put("description", p.getDescription() != null ? p.getDescription() : "");
+                meta.put("constraints", new ArrayList<>(p.getConstraints()));
+                out.put(path.isEmpty() ? p.getName() : path, meta);
             } else {
-                // Nested schema → recurse
-                buildMetadata(prop.getValue(), parentPath, out);
+                buildMetadata(p.getValue(), path, out);
             }
             return;
         }
 
         if (s instanceof ArraySchema arr) {
             Schema el = arr.getElementSchema();
-            if (el != null) buildMetadata(el, parentPath + "[0]", out);
+            if (el != null) buildMetadata(el, path + "[0]", out);
             return;
         }
 
         if (s instanceof ObjectSchema obj) {
             for (Property p : obj.getProperties().values()) {
-                String path = parentPath.isEmpty() ? p.getName() : parentPath + "." + p.getName();
-                buildMetadata(p, path, out);
+                String newPath = path.isEmpty() ? p.getName() : path + "." + p.getName();
+                buildMetadata(p, newPath, out);
             }
         }
     }
