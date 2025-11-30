@@ -126,7 +126,7 @@ public class ApiDocumentAssembler {
 
         Schema schema = schemaRegistry.getSchema(type);
         if (schema == null) {
-            log.warn("{} SCHEMA MISSING: {} (SchemaRegistry size: {})",
+            log.debug("{} SCHEMA MISSING: {} (SchemaRegistry size: {})",
                     typeName, type.getTypeName(), schemaRegistry.size());
             return null;
         }
