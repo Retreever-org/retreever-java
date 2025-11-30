@@ -8,78 +8,73 @@
 
 package dev.retreever.engine;
 
+import dev.retreever.config.SchemaConfig;
 import dev.retreever.doc.resolver.ApiDocResolver;
-import dev.retreever.endpoint.resolver.ApiEndpointIOResolver;
 import dev.retreever.endpoint.resolver.ApiEndpointResolver;
-import dev.retreever.endpoint.resolver.ApiErrorResolver;
-import dev.retreever.endpoint.resolver.*;
 import dev.retreever.group.resolver.ApiGroupResolver;
 import dev.retreever.repo.ApiErrorRegistry;
 import dev.retreever.repo.ApiHeaderRegistry;
 import dev.retreever.repo.SchemaRegistry;
-import dev.retreever.schema.resolver.JsonSchemaResolver;
 import dev.retreever.view.ApiDocumentAssembler;
-import dev.retreever.view.SchemaLookupService;
 import dev.retreever.view.dto.ApiDocument;
 
 import java.util.List;
 import java.util.Set;
 
 /**
- * Coordinates the Retreever pipeline and drives the full documentation build.
+ * Top-level orchestrator coordinating the complete Retreever documentation pipeline.
+ * Executes in precise order: Errors → Schemas → Endpoints → Document Assembly.
  */
 public class RetreeverOrchestrator {
 
+    private final ApiErrorResolutionOrchestrator apiErrorResolutionOrchestrator;
+    private final SchemaResolutionOrchestrator schemaResolutionOrchestrator;
     private final ApiDocumentAssembler assembler;
     private final ApiDocResolver docResolver;
 
-    /**
-     * Constructs the orchestrator and wires all core components.
-     */
     public RetreeverOrchestrator(List<String> basePackages) {
 
-        // JSON schema generator + registry
-        JsonSchemaResolver jsonSchemaResolver = new JsonSchemaResolver(basePackages);
-        SchemaRegistry schemaRegistry = new SchemaRegistry(jsonSchemaResolver);
+        // 1. Initialise config
+        SchemaConfig.init(basePackages);
 
-        // Shared header definitions
+        // 2. Registries (singletons where applicable)
+        ApiErrorRegistry errorRegistry = ApiErrorRegistry.getInstance(); // ✅ Singleton
         ApiHeaderRegistry headerRegistry = new ApiHeaderRegistry();
+        SchemaRegistry schemaRegistry = SchemaRegistry.getInstance();
 
-        // Error resolver + registry for @ExceptionHandler mappings
-        ApiErrorResolver errorResolver = new ApiErrorResolver(jsonSchemaResolver);
-        ApiErrorRegistry errorRegistry = new ApiErrorRegistry(errorResolver);
-
-        // Request/response schema + header/param/path-var resolution
-        ApiEndpointIOResolver ioResolver =
-                new ApiEndpointIOResolver(schemaRegistry, headerRegistry);
-
-        // Full endpoint resolver (metadata + IO + errors)
-        ApiEndpointResolver endpointResolver =
-                new ApiEndpointResolver(schemaRegistry, headerRegistry, errorRegistry);
-
-        // Controller → ApiGroup resolver
+        // 3. Resolver chain (endpoint → group → doc)
+        ApiEndpointResolver endpointResolver = new ApiEndpointResolver(headerRegistry);
         ApiGroupResolver groupResolver = new ApiGroupResolver(endpointResolver);
 
-        // Application-level documentation resolver
+        // 4. Orchestrators & Assemblers
+        this.apiErrorResolutionOrchestrator = new ApiErrorResolutionOrchestrator(errorRegistry);
+        this.schemaResolutionOrchestrator = new SchemaResolutionOrchestrator(schemaRegistry);
+        this.assembler = new ApiDocumentAssembler(schemaRegistry, errorRegistry);
         this.docResolver = new ApiDocResolver(groupResolver);
-
-        // Converts internal schemas to renderable model/example/metadata DTO
-        SchemaLookupService lookup =
-                new SchemaLookupService(schemaRegistry, errorRegistry);
-
-        // Builds final ApiDocument DTO for serialization
-        this.assembler = new ApiDocumentAssembler(lookup);
     }
 
     /**
-     * Builds the full API documentation output.
-     *
-     * @param applicationClass root application class
-     * @param controllers      detected controller classes
-     * @return full assembled ApiDocument DTO
+     * Executes the COMPLETE documentation pipeline in precise order:
+     * 1. ApiErrors (ControllerAdvices → ApiErrorRegistry)
+     * 2. Schemas (Controllers + Advices → SchemaRegistry)
+     * 3. Endpoints (Controllers → ApiEndpoint models)
+     * 4. Document Assembly (ApiDoc → ApiDocument DTO)
      */
-    public ApiDocument build(Class<?> applicationClass, Set<Class<?>> controllers) {
-        var doc = docResolver.resolve(applicationClass, controllers);
-        return assembler.assemble(doc);
+    public ApiDocument build(Class<?> applicationClass,
+                             Set<Class<?>> controllers,
+                             Set<Class<?>> controllerAdvices) {
+
+        // === STEP 1: RESOLVE API ERRORS ===
+        apiErrorResolutionOrchestrator.resolveAllErrors(controllerAdvices);
+
+        // === STEP 2: RESOLVE SCHEMAS ===
+        schemaResolutionOrchestrator.resolveAllSchema(applicationClass, controllers, controllerAdvices);
+
+        // === STEP 3: RESOLVE ENDPOINTS & DOCUMENT ===
+        dev.retreever.endpoint.model.ApiDoc apiDoc =
+                docResolver.resolve(applicationClass, controllers);
+
+        // === STEP 4: ASSEMBLE FINAL DTO ===
+        return assembler.assemble(apiDoc);
     }
 }

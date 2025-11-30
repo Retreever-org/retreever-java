@@ -8,34 +8,25 @@
 
 package dev.retreever.endpoint.resolver;
 
-import dev.retreever.domain.annotation.ApiError;
+import dev.retreever.annotation.ApiError;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 
-import dev.retreever.domain.model.JsonProperty;
-import dev.retreever.schema.resolver.JsonSchemaResolver;
-import dev.retreever.schema.resolver.TypeResolver;
-
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Resolves {@link dev.retreever.domain.model.ApiError} models from controller advice methods.
+ * Resolves {@link dev.retreever.endpoint.model.ApiError} models from controller advice methods.
  * Processes only methods annotated with {@link ExceptionHandler},
  * extracts declared exception types, determines HTTP status and
  * description (via @ApiError), and resolves the error body schema
  * from the handler's return type.
  */
 public class ApiErrorResolver {
-
-    private final JsonSchemaResolver jsonSchemaResolver;
-
-    public ApiErrorResolver(JsonSchemaResolver jsonSchemaResolver) {
-        this.jsonSchemaResolver = jsonSchemaResolver;
-    }
 
     /**
      * Scans the provided methods and produces ApiError objects for each
@@ -44,9 +35,9 @@ public class ApiErrorResolver {
      * @param methods a list of potential exception handler methods
      * @return resolved error models
      */
-    public List<dev.retreever.domain.model.ApiError> resolve(List<Method> methods) {
+    public List<dev.retreever.endpoint.model.ApiError> resolve(List<Method> methods) {
 
-        List<dev.retreever.domain.model.ApiError> result = new ArrayList<>();
+        List<dev.retreever.endpoint.model.ApiError> result = new ArrayList<>();
 
         for (Method method : methods) {
 
@@ -61,10 +52,6 @@ public class ApiErrorResolver {
                 continue;
             }
 
-            // Resolve error schema from return type (once per handler)
-            Class<?> returnType = extractReturnType(method);
-            List<JsonProperty> resolvedSchema = resolveErrorSchema(returnType);
-
             // Optional @ApiError annotation (status + description)
             ApiError apiAnn =
                     method.getAnnotation(ApiError.class);
@@ -77,42 +64,40 @@ public class ApiErrorResolver {
                     ? apiAnn.description()
                     : "";
 
-            for (Class<?> exceptionType : exceptionTypes) {
+            // Extract return Type (NOT schema)
+            Type returnType = extractReturnType(method);
 
-                dev.retreever.domain.model.ApiError error = dev.retreever.domain.model.ApiError.create(
+            // Create one ApiError per declared exception type
+            for (Class<?> ex : exceptionTypes) {
+
+                dev.retreever.endpoint.model.ApiError err = dev.retreever.endpoint.model.ApiError.create(
                         status,
                         description,
-                        exceptionType.getName()
+                        ex.getName()
                 );
 
-                if (!resolvedSchema.isEmpty()) {
-                    error.setErrorBody(resolvedSchema);
-                }
+                // Store TYPE only, no schema resolving
+                err.setErrorBodyType(returnType);
 
-                result.add(error);
+                result.add(err);
             }
         }
 
         return result;
     }
 
-    private List<JsonProperty> resolveErrorSchema(Class<?> type) {
-        if (type == null || type == Void.class || type == void.class) {
-            return List.of();
-        }
-        return jsonSchemaResolver.resolve(type);
-    }
+    private Type extractReturnType(Method method) {
 
-    private Class<?> extractReturnType(Method method) {
+        Type generic = method.getGenericReturnType();
 
-        var generic = method.getGenericReturnType();
-        Class<?> raw = TypeResolver.extractRawClass(generic);
-
-        if (raw == ResponseEntity.class && generic instanceof ParameterizedType p) {
-            var inner = p.getActualTypeArguments()[0];
-            return TypeResolver.extractRawClass(inner);
+        // unwrap ResponseEntity<T>
+        if (generic instanceof ParameterizedType p) {
+            Type raw = p.getRawType();
+            if (raw instanceof Class<?> c && c == ResponseEntity.class) {
+                return p.getActualTypeArguments()[0];
+            }
         }
 
-        return raw;
+        return generic;
     }
 }

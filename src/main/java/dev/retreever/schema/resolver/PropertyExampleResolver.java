@@ -8,16 +8,16 @@
 
 package dev.retreever.schema.resolver;
 
-import dev.retreever.domain.annotation.FieldInfo;
-import dev.retreever.domain.model.JsonProperty;
+import dev.retreever.annotation.FieldInfo;
+import dev.retreever.schema.model.Property;
 
 import java.lang.reflect.Field;
 
 /**
- * Resolves example values for a {@link JsonProperty} from {@link FieldInfo}.
+ * Resolves example values for a {@link Property} from {@link FieldInfo}.
  * If the annotation declares a non-empty example, it is applied to the property.
  */
-public class JsonPropertyExampleResolver {
+public class PropertyExampleResolver {
 
     /**
      * Applies an example value to the given JSON property, if the field
@@ -26,7 +26,7 @@ public class JsonPropertyExampleResolver {
      * @param property the property to update
      * @param field    the field annotated with FieldInfo
      */
-    public static void resolve(JsonProperty property, Field field) {
+    public static void resolve(Property property, Field field) {
         if (property == null || field == null) {
             return;
         }

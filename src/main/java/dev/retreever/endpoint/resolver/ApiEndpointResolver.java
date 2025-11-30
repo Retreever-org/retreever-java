@@ -1,79 +1,53 @@
-/*
- * Copyright (c) 2025 Retreever Contributors
- *
- * Licensed under the MIT License.
- * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
- */
-
 package dev.retreever.endpoint.resolver;
 
-import dev.retreever.domain.annotation.ApiEndpoint;
-import dev.retreever.repo.ApiErrorRegistry;
+import dev.retreever.endpoint.model.ApiEndpoint;
 import dev.retreever.repo.ApiHeaderRegistry;
-import dev.retreever.repo.SchemaRegistry;
 
 import java.lang.reflect.Method;
-import java.util.List;
+import java.lang.reflect.Type;
+import java.util.Arrays;
 
 /**
- * Main coordinator responsible for resolving a complete {@link dev.retreever.domain.model.ApiEndpoint}
- * from a controller method. Aggregates metadata, path/method info,
- * content types, IO schemas, parameters, and error references.
+ * Builds a dev.retreever.endpoint.model.ApiEndpoint from a controller method.
+ * NO schema resolving happens here.
+ * Only metadata + Java Types.
  */
 public class ApiEndpointResolver {
 
-    private final ApiEndpointIOResolver endpointIOResolver;
-    private final ApiErrorRegistry apiErrorRegistry;
+    private final ApiEndpointIOResolver ioResolver;
 
-    public ApiEndpointResolver(SchemaRegistry schemaRegistry,
-                               ApiHeaderRegistry headerRegistry,
-                               ApiErrorRegistry apiErrorRegistry) {
-        this.apiErrorRegistry = apiErrorRegistry;
-        this.endpointIOResolver = new ApiEndpointIOResolver(schemaRegistry, headerRegistry);
+    public ApiEndpointResolver(
+            ApiHeaderRegistry headerRegistry
+    ) {
+        this.ioResolver = new ApiEndpointIOResolver(headerRegistry);
     }
 
-    /**
-     * Resolves and constructs an {@link dev.retreever.domain.model.ApiEndpoint} representation
-     * from the given controller method.
-     * <p>
-     * Steps:
-     * <ol>
-     *     <li>Metadata (name, description, security, status, deprecation)</li>
-     *     <li>Path and HTTP method</li>
-     *     <li>Consumes/produces media types</li>
-     *     <li>Request/response schemas, parameters, headers</li>
-     *     <li>Error references from {@code @ApiEndpoint(errors={})}</li>
-     * </ol>
-     *
-     * @param method the controller method to analyze
-     * @return fully resolved endpoint model
-     */
-    public dev.retreever.domain.model.ApiEndpoint resolve(Method method) {
-        dev.retreever.domain.model.ApiEndpoint endpoint = new dev.retreever.domain.model.ApiEndpoint();
+    public ApiEndpoint resolve(Method method) {
 
-        // 1. Name, secured flag, status, description, deprecated
-        EndpointMetadataResolver.resolve(endpoint, method);
+        ApiEndpoint ep = new ApiEndpoint();
 
-        // 2. Path and HTTP method
-        EndpointPathAndMethodResolver.resolve(endpoint, method);
+        // 1. Metadata
+        EndpointMetadataResolver.resolve(ep, method);
 
-        // 3. Consumes/produces media types
-        EndpointContentTypeResolver.resolve(endpoint, method);
+        // 2. Path + HTTP method
+        EndpointPathAndMethodResolver.resolve(ep, method);
 
-        // 4. Request schema, response schema, path vars, query params, headers
-        endpointIOResolver.resolve(endpoint, method);
+        // 3. Consumes / Produces
+        EndpointContentTypeResolver.resolve(ep, method);
 
-        // 5. Apply error refs from annotation, only if already registered
-        ApiEndpoint ann =
-                method.getAnnotation(ApiEndpoint.class);
+        // 4. Types, params, headers
+        ioResolver.resolve(ep, method);
 
-        if (ann != null) {
-            Class<? extends Throwable>[] errors = ann.errors();
-            List<String> errorRefs = apiErrorRegistry.getErrorRefs(errors);
-            endpoint.setErrorRefs(errorRefs == null ? List.of() : errorRefs);
+        // 5. Error types (NO resolving here, only store Types)
+        dev.retreever.annotation.ApiEndpoint ann =
+                method.getAnnotation(dev.retreever.annotation.ApiEndpoint.class);
+
+        if (ann != null && ann.errors().length > 0) {
+            Arrays.stream(ann.errors())
+                    .map(c -> (Type) c)
+                    .forEach(ep::addErrorBodyType);
         }
 
-        return endpoint;
+        return ep;
     }
 }

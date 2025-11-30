@@ -8,81 +8,70 @@
 
 package dev.retreever.repo;
 
-import dev.retreever.domain.model.ApiError;
-import dev.retreever.endpoint.resolver.ApiErrorResolver;
+import dev.retreever.endpoint.model.ApiError;
 
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 /**
- * Registry for storing resolved {@link ApiError} definitions.
- * Ensures each exception type is documented once and provides
- * lookup utilities for endpoints referencing specific errors.
+ * Thread-safe singleton registry storing ApiError definitions resolved from @ExceptionHandler methods.
+ * Keyed by the exception's fully qualified class name.
+ * <p>
+ * No schema resolving is done here.
  */
-public class ApiErrorRegistry extends DocRegistry<ApiError> {
+public final class ApiErrorRegistry extends DocRegistry<ApiError> {
 
-    private final ApiErrorResolver apiErrorResolver;
+    private static final ApiErrorRegistry INSTANCE = new ApiErrorRegistry();
+    private static final Map<String, ApiError> errors = new ConcurrentHashMap<>();
 
-    public ApiErrorRegistry(ApiErrorResolver apiErrorResolver) {
-        this.apiErrorResolver = apiErrorResolver;
+    private ApiErrorRegistry() {
+    }
+
+    public static ApiErrorRegistry getInstance() {
+        return INSTANCE;
     }
 
     /**
-     * Resolves error models from the given handler methods,
-     * registers them, and returns their reference keys.
-     *
-     * @param methods controller advice handler methods
-     * @return list of registered error reference names
+     * Registers an ApiError using its exception class name. Deduplicates automatically.
      */
-    public List<String> registerApiErrors(List<Method> methods) {
-
-        List<ApiError> errors = apiErrorResolver.resolve(methods);
-
-        return errors.stream()
-                .map(this::registerApiError)
-                .toList();
+    public void register(ApiError error) {
+        String key = error.getExceptionName();
+        if (!contains(key)) {
+            add(key, error);
+        }
     }
 
     /**
-     * Registers a single ApiError using its exception class name as the key.
-     *
-     * @param apiError resolved error model
-     * @return reference key used for lookup
+     * Look up an ApiError by exception class.
      */
-    public String registerApiError(ApiError apiError) {
-
-        String ref = apiError.getExceptionName();
-
-        if (!contains(ref)) {
-            add(ref, apiError);
-        }
-
-        return ref;
+    public ApiError get(Class<? extends Throwable> exceptionType) {
+        if (exceptionType == null) return null;
+        return get(exceptionType.getName());
     }
 
     /**
-     * Returns reference keys for exception types declared on @ApiEndpoint(errors = {...}),
-     * but **only if** those errors have already been registered through handler resolution.
-     *
-     * @param exceptionTypes exception classes referenced on an endpoint
-     * @return list of matching error reference keys
+     * Retrieves all registered ApiErrors.
      */
-    public List<String> getErrorRefs(Class<? extends Throwable>[] exceptionTypes) {
+    public Collection<ApiError> values() {
+        return getAll().values();
+    }
 
-        List<String> refs = new ArrayList<>();
+    /**
+     * Optimizes registry: log stats.
+     */
+    public void optimize() {
+        System.out.println("ApiErrorRegistry: " + errors.size() + " unique errors registered");
+    }
 
-        if (exceptionTypes == null) {
-            return refs;
-        }
+    /**
+     * Clears all registered errors.
+     */
+    public void clear() {
+        errors.clear();
+    }
 
-        for (Class<? extends Throwable> ex : exceptionTypes) {
-            String key = ex.getName();
-            if (contains(key)) {
-                refs.add(key);
-            }
-        }
-
-        return refs;
+    public int size() {
+        return errors.size();
     }
 }

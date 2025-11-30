@@ -6,7 +6,9 @@
  *     https://opensource.org/licenses/MIT
  */
 
-package dev.retreever.domain.model;
+package dev.retreever.endpoint.model;
+
+import dev.retreever.schema.model.JsonPropertyType;
 
 import java.util.HashSet;
 import java.util.Set;

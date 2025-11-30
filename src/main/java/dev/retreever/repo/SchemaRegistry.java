@@ -3,44 +3,71 @@
  *
  * Licensed under the MIT License.
  * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
+ *     [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT)
  */
 
 package dev.retreever.repo;
 
-import dev.retreever.domain.model.JsonProperty;
-import dev.retreever.schema.resolver.JsonSchemaResolver;
-import dev.retreever.schema.resolver.TypeResolver;
+import dev.retreever.schema.model.Schema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.List;
+import java.lang.reflect.Type;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 /**
- * Registry for storing resolved JSON schemas keyed by reference name.
- * Ensures each DTO type is processed once, returning a stable schema
- * reference for reuse across endpoints.
+ * Thread-safe singleton registry for resolved schemas using Type.getTypeName() keys.
+ * Type-only registration for maximum safety and simplicity.
  */
-public class SchemaRegistry extends DocRegistry<List<JsonProperty>> {
+public final class SchemaRegistry {
+    Logger log = LoggerFactory.getLogger(SchemaRegistry.class);
+    private static final SchemaRegistry INSTANCE = new SchemaRegistry();
+    private static final Map<String, Schema> schemas = new ConcurrentHashMap<>();
 
-    private final JsonSchemaResolver jsonSchemaResolver;
+    private SchemaRegistry() {}
 
-    public SchemaRegistry(JsonSchemaResolver jsonSchemaResolver) {
-        this.jsonSchemaResolver = jsonSchemaResolver;
+    public static SchemaRegistry getInstance() {
+        return INSTANCE;
     }
 
     /**
-     * Resolves and registers the schema for the given DTO class if not already present.
-     *
-     * @param dtoClass the class whose schema should be generated
-     * @return reference name used as the registry key
+     * Registers schema for the given type using Type.getTypeName(). Deduplicates automatically.
      */
-    public String registerSchema(Class<?> dtoClass) {
-        String ref = TypeResolver.resolveRefName(dtoClass);
+    public void register(Type type, Schema schema) {
+        if (type == null || schema == null) return;
 
-        if (!contains(ref)) {
-            List<JsonProperty> props = jsonSchemaResolver.resolve(dtoClass);
-            add(ref, props);
+        String typeName = type.getTypeName();
+        if (typeName != null) {
+            schemas.putIfAbsent(typeName, schema);
         }
+    }
 
-        return ref;
+    /**
+     * Retrieves schema by type.
+     */
+    public Schema getSchema(Type type) {
+        if (type == null) return null;
+        String typeName = type.getTypeName();
+        return typeName != null ? schemas.get(typeName) : null;
+    }
+
+    /**
+     * Optimizes registry: log stats.
+     */
+    public void optimize() {
+        log.info("SchemaRegistry: {} unique schemas registered", schemas.size());
+    }
+
+    public int size() {
+        return schemas.size();
+    }
+
+    public void clear() {
+        schemas.clear();
+    }
+
+    public Map<String, Schema> getSchemas() {
+        return schemas;
     }
 }

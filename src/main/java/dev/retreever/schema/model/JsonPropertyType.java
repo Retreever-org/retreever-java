@@ -6,7 +6,7 @@
  *     https://opensource.org/licenses/MIT
  */
 
-package dev.retreever.domain.model;
+package dev.retreever.schema.model;
 
 /**
  * Supported JSON value types used when building schema properties.

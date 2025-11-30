@@ -6,7 +6,9 @@
  *     https://opensource.org/licenses/MIT
  */
 
-package dev.retreever.domain.model;
+package dev.retreever.endpoint.model;
+
+import dev.retreever.schema.model.JsonPropertyType;
 
 /**
  * Represents a resolved HTTP header used by an endpoint.

@@ -3,217 +3,246 @@
  *
  * Licensed under the MIT License.
  * You may obtain a copy of the License at:
- *     https://opensource.org/licenses/MIT
+ * https://opensource.org/licenses/MIT
  */
 
 package dev.retreever.view;
 
-import dev.retreever.domain.model.*;
-import dev.retreever.domain.model.*;
+import dev.retreever.endpoint.model.*;
+import dev.retreever.repo.ApiErrorRegistry;
+import dev.retreever.repo.SchemaRegistry;
+import dev.retreever.schema.model.Schema;
+import dev.retreever.schema.resolver.SchemaResolver;
 import dev.retreever.view.dto.ApiDocument;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+
+import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
- * Assembles the internal {@link ApiDoc} model into a fully serialized-friendly
- * {@link ApiDocument} DTO used by the UI/JSON renderer layer.
- *
- * <p>
- * Responsible for mapping:
- * <ul>
- *     <li>Groups → DTO groups</li>
- *     <li>Endpoints → DTO endpoints</li>
- *     <li>Parameters, headers, path variables</li>
- *     <li>Request/response schemas via {@link SchemaLookupService}</li>
- * </ul>
- * </p>
+ * Assembles internal ApiDoc → final ApiDocument DTO for JSON serialization.
+ * Integrates SchemaRegistry + ApiErrorRegistry + SchemaViewRenderer.
+ * FULL DEBUG LOGGING to diagnose schema resolution issues.
  */
 public class ApiDocumentAssembler {
 
-    private final SchemaLookupService schemaLookupService;
+    private static final Logger log = LoggerFactory.getLogger(ApiDocumentAssembler.class);
 
-    public ApiDocumentAssembler(SchemaLookupService schemaLookupService) {
-        this.schemaLookupService = schemaLookupService;
+    private final SchemaRegistry schemaRegistry;
+    private final ApiErrorRegistry errorRegistry;
+
+    public ApiDocumentAssembler(SchemaRegistry schemaRegistry, ApiErrorRegistry errorRegistry) {
+        this.schemaRegistry = schemaRegistry;
+        this.errorRegistry = errorRegistry;
+        log.debug("ApiDocumentAssembler initialized - SchemaRegistry: {}, ErrorRegistry: {}",
+                schemaRegistry.size(), errorRegistry.size());
     }
 
-    /**
-     * Converts the full {@link ApiDoc} model into its serializable counterpart.
-     *
-     * @param source internal model representing the entire API documentation
-     * @return DTO representation ready for JSON output
-     */
-    public ApiDocument assemble(ApiDoc source) {
+    // PUBLIC ENTRY POINT
+    public ApiDocument assemble(ApiDoc apiDoc) {
+        log.debug("Assembling ApiDocument: {} groups, {} total endpoints",
+                apiDoc.getGroups().size(), countTotalEndpoints(apiDoc));
 
-        List<ApiDocument.ApiGroup> groups = new ArrayList<>();
+        List<ApiDocument.ApiGroup> groups = apiDoc.getGroups().stream()
+                .map(this::mapGroup)
+                .collect(Collectors.toList());
 
-        for (ApiGroup g : source.getGroups()) {
-            groups.add(mapGroup(g));
-        }
-
-        return new ApiDocument(
-                source.getName(),
-                source.getDescription(),
-                source.getVersion(),
-                source.getUriPrefix(),
+        ApiDocument doc = new ApiDocument(
+                apiDoc.getName(),
+                apiDoc.getDescription(),
+                apiDoc.getVersion(),
+                apiDoc.getUriPrefix(),
                 Instant.now(),
                 groups
         );
+
+        log.debug("ApiDocument assembled successfully");
+        return doc;
     }
 
-    /**
-     * Maps a single {@link ApiGroup} into DTO form.
-     */
-    private ApiDocument.ApiGroup mapGroup(ApiGroup g) {
-
-        List<ApiDocument.Endpoint> endpoints = new ArrayList<>();
-
-        for (ApiEndpoint ep : g.getEndpoints()) {
-            endpoints.add(mapEndpoint(ep));
-        }
+    // GROUP MAPPING
+    private ApiDocument.ApiGroup mapGroup(ApiGroup group) {
+        log.debug("Mapping group: {} ({} endpoints)", group.getName(), group.getEndpoints().size());
+        List<ApiDocument.Endpoint> endpoints = group.getEndpoints().stream()
+                .map(this::mapEndpoint)
+                .collect(Collectors.toList());
 
         return new ApiDocument.ApiGroup(
-                g.getName(),
-                g.getDescription(),
-                g.isDeprecated(),
+                group.getName(),
+                group.getDescription(),
+                group.isDeprecated(),
                 endpoints
         );
     }
 
-    /**
-     * Maps a single {@link ApiEndpoint} into DTO form, including request,
-     * response and error schema resolution.
-     */
-    private ApiDocument.Endpoint mapEndpoint(ApiEndpoint ep) {
-
-        Map<String, Object> requestSchema = schemaLookupService.resolveRequest(ep);
-        Map<String, Object> responseSchema = schemaLookupService.resolveResponse(ep);
-        List<Map<String, Object>> errorSchemas = schemaLookupService.resolveErrors(ep);
+    // ENDPOINT MAPPING (FULL SPEC ALIGNMENT)
+    private ApiDocument.Endpoint mapEndpoint(ApiEndpoint endpoint) {
+        log.debug("Mapping endpoint: {} {}", endpoint.getHttpMethod(), endpoint.getPath());
 
         return new ApiDocument.Endpoint(
-                ep.getName(),
-                ep.isDeprecated(),
-                ep.getDescription(),
-                ep.isSecured(),
-                ep.getHttpMethod(),
-                ep.getPath(),
-                ep.getStatus().toString(),
-                ep.getStatus().value(),
-                ep.getConsumes(),
-                ep.getProduces(),
-                mapPathVariables(ep.getPathVariables()),
-                mapParams(ep.getQueryParams()),
-                mapHeaders(ep.getHeaders()),
-                requestSchema,
-                responseSchema,
-                mapErrors(errorSchemas)
+                endpoint.getName(),
+                endpoint.isDeprecated(),
+                endpoint.getDescription(),
+                endpoint.isSecured(),
+                endpoint.getHttpMethod(),
+                endpoint.getPath(),
+                formatStatus(endpoint.getStatus()),
+                endpoint.getStatus().value(),
+                safeList(endpoint.getConsumes()),
+                safeList(endpoint.getProduces()),
+                mapPathVariables(endpoint.getPathVariables()),
+                mapQueryParams(endpoint.getQueryParams()),
+                mapHeaders(endpoint.getHeaders()),
+                renderRequest(endpoint.getRequestBodyType()),
+                renderResponse(endpoint.getResponseBodyType()),
+                mapErrors(endpoint)
         );
     }
 
-    /**
-     * Maps path variables into DTO form.
-     */
+    // SCHEMA RENDERING (WITH FULL DEBUG)
+    private Map<String, Object> renderRequest(Type type) {
+        return renderSchema(type, "REQUEST");
+    }
+
+    private Map<String, Object> renderResponse(Type type) {
+        return renderSchema(type, "RESPONSE");
+    }
+
+    private Map<String, Object> renderSchema(Type type, String typeName) {
+        if (type == null) {
+            log.debug("{} TYPE NULL", typeName);
+            return null;
+        }
+
+        log.debug("Looking for {} schema: {}", typeName, type.getTypeName());
+
+        Schema schema = schemaRegistry.getSchema(type);
+        if (schema == null) {
+            log.warn("{} SCHEMA MISSING: {} (SchemaRegistry size: {})",
+                    typeName, type.getTypeName(), schemaRegistry.size());
+            return null;
+        }
+
+        log.debug("{} SCHEMA FOUND: {}", typeName, type.getTypeName());
+        Map<String, Object> rendered = typeName.equals("REQUEST")
+                ? SchemaViewRenderer.renderRequest(schema)
+                : SchemaViewRenderer.renderResponse(schema);
+
+        log.debug("{} RENDERED SUCCESSFULLY", typeName);
+        return rendered;
+    }
+
+    // ERROR MAPPING (ApiErrorRegistry INTEGRATED)
+    private List<ApiDocument.Error> mapErrors(ApiEndpoint endpoint) {
+        log.debug("Mapping {} errors", endpoint.getErrorBodyTypes().size());
+        return endpoint.getErrorBodyTypes().stream()
+                .map(this::renderError)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    private ApiDocument.Error renderError(Type errorType) {
+        if (errorType == null) return null;
+
+        // 1. Extract exception class from error body type
+        Class<?> classType = SchemaResolver.extractRawClass(errorType);
+        if (classType == null || !Throwable.class.isAssignableFrom(classType)) {
+            log.debug("Invalid exception type: {}", errorType.getTypeName());
+            return null;
+        }
+
+        @SuppressWarnings("unchecked")
+        Class<? extends Throwable> exceptionClass = (Class<? extends Throwable>) classType;
+
+        // 2. Lookup ApiError from registry
+        ApiError apiError = errorRegistry.get(exceptionClass);
+        if (apiError == null) {
+            log.debug("No ApiError for: {}", exceptionClass.getSimpleName());
+            return null;
+        }
+
+        log.debug("Error mapped: {} -> {}", exceptionClass.getSimpleName(), apiError.getStatus());
+
+        // 3. Render error body schema (if present)
+        Schema schema = null;
+        Type errorBodyType = apiError.getErrorBodyType();
+        if (errorBodyType != null) {
+            schema = schemaRegistry.getSchema(errorBodyType);
+        }
+
+        Map<String, Object> response = schema != null
+                ? SchemaViewRenderer.renderResponse(schema)
+                : null;
+
+        // 4. Map to final DTO
+        return new ApiDocument.Error(
+                apiError.getStatus().getReasonPhrase(),  // Fixed: getReasonPhrase()
+                apiError.getStatus().value(),
+                apiError.getDescription(),
+                apiError.getErrorCode(),
+                response
+        );
+    }
+
+    // PARAMETER MAPPINGS (OPTIMIZED)
     private List<ApiDocument.PathVariable> mapPathVariables(List<ApiPathVariable> vars) {
-
-        if (vars == null) return List.of();
-
-        List<ApiDocument.PathVariable> list = new ArrayList<>();
-
-        for (ApiPathVariable v : vars) {
-            list.add(new ApiDocument.PathVariable(
-                    v.getName(),
-                    v.getType().name().toLowerCase(),
-                    v.getDescription(),
-                    new ArrayList<>(v.getConstraints())
-            ));
-        }
-
-        return list;
+        if (vars == null || vars.isEmpty()) return List.of();
+        return vars.stream()
+                .map(v -> new ApiDocument.PathVariable(
+                        v.getName(),
+                        v.getType().displayName(),
+                        v.getDescription(),
+                        new ArrayList<>(v.getConstraints())
+                ))
+                .collect(Collectors.toList());
     }
 
-    /**
-     * Maps query params into DTO form.
-     */
-    private List<ApiDocument.Param> mapParams(List<ApiParam> params) {
-
-        if (params == null) return List.of();
-
-        List<ApiDocument.Param> list = new ArrayList<>();
-
-        for (ApiParam p : params) {
-            list.add(new ApiDocument.Param(
-                    p.getName(),
-                    p.getDescription(),
-                    p.getType().name().toLowerCase(),
-                    p.isRequired() ? "true" : "false",
-                    p.getDefaultValue(),
-                    new ArrayList<>(p.getConstraints())
-            ));
-        }
-
-        return list;
+    private List<ApiDocument.Param> mapQueryParams(List<ApiParam> params) {
+        if (params == null || params.isEmpty()) return List.of();
+        return params.stream()
+                .map(p -> new ApiDocument.Param(
+                        p.getName(),
+                        p.getDescription(),
+                        p.getType().displayName(),
+                        String.valueOf(p.isRequired()),
+                        p.getDefaultValue(),
+                        new ArrayList<>(p.getConstraints())
+                ))
+                .collect(Collectors.toList());
     }
 
-    /**
-     * Maps headers into DTO form.
-     */
     private List<ApiDocument.Header> mapHeaders(List<ApiHeader> headers) {
-
-        if (headers == null) return List.of();
-
-        List<ApiDocument.Header> list = new ArrayList<>();
-
-        for (ApiHeader h : headers) {
-            list.add(new ApiDocument.Header(
-                    h.getName(),
-                    h.getType().name().toLowerCase(),
-                    h.isRequired() ? "true" : "false",
-                    h.getDescription()
-            ));
-        }
-
-        return list;
+        if (headers == null || headers.isEmpty()) return List.of();
+        return headers.stream()
+                .map(h -> new ApiDocument.Header(
+                        h.getName(),
+                        h.getType().displayName(),
+                        String.valueOf(h.isRequired()),
+                        h.getDescription()
+                ))
+                .collect(Collectors.toList());
     }
 
-    /**
-     * Converts internal error maps (produced by {@link SchemaLookupService})
-     * into DTO {@link ApiDocument.Error} records.
-     */
-    private List<ApiDocument.Error> mapErrors(List<Map<String, Object>> errors) {
-
-        if (errors == null) return List.of();
-
-        List<ApiDocument.Error> list = new ArrayList<>();
-
-        for (Map<String, Object> e : errors) {
-            list.add(new ApiDocument.Error(
-                    (String) e.get("status"),
-                    (Integer) e.get("status_code"),
-                    (String) e.get("description"),
-                    (String) e.get("error_code"),
-                    safeMap(e.get("response"))
-            ));
-        }
-
-        return list;
+    // UTILITIES
+    private String formatStatus(HttpStatus status) {
+        return status != null ? status.getReasonPhrase() : "UNKNOWN";
     }
 
-    /**
-     * Ensures map values are safely converted into a String-key map for DTO compatibility.
-     */
-    private static Map<String, Object> safeMap(Object obj) {
-        if (obj instanceof Map<?, ?> raw) {
-            Map<String, Object> result = new LinkedHashMap<>();
-            raw.forEach((k, v) -> {
-                if (k instanceof String key) {
-                    result.put(key, v);
-                }
-            });
-            return result;
-        }
-        return null;
+    private <T> List<T> safeList(List<T> list) {
+        return list != null ? list : List.of();
+    }
+
+    private int countTotalEndpoints(ApiDoc apiDoc) {
+        return apiDoc.getGroups().stream()
+                .mapToInt(g -> g.getEndpoints().size())
+                .sum();
     }
 }
